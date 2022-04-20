@@ -1,0 +1,2609 @@
+;*****************************************************************
+;* This stationery serves as the framework for a                 *
+;* user application (single file, absolute assembly application) *
+;* For a more comprehensive program that                         *
+;* demonstrates the more advanced functionality of this          *
+;* processor, please see the demonstration applications          *
+;* located in the examples subdirectory of the                   *
+;* Freescale CodeWarrior for the HC12 Program directory          *
+;*****************************************************************
+
+; export symbols
+            XDEF Entry, _Startup            ; export 'Entry' symbol
+            ABSENTRY Entry        ; for absolute assembly: mark this as application entry point
+
+
+
+; Include derivative-specific definitions 
+		INCLUDE 'derivative.inc' 
+
+ROMStart    EQU  $4000  ; absolute address to place my code/constant data
+
+; variable/data section
+
+            ORG RAMStart
+; Insert here your data definition.
+
+;**************************************************************
+;*                 Text                                       *
+;**************************************************************
+
+SetPassTxt DC.B "Set Pass",0
+PBTxt      DC.B "PB Pass ",0
+PotTxt     DC.B "Pot Pass",0
+USTxt      DC.B "US Pass ",0
+LoginTxt   DC.B "Login   ",0
+SuccessTxt DC.B "Success ",0
+FailTxt    DC.B "Fail    ",0
+InstrTxt1  DC.B "5:Retry ",0
+InstrTxt2  DC.B "5:Reset ",0
+
+UserInput  DC.B "0123456789ABCDEF ",0
+
+;**************************************************************
+;*                 Flags                                      *
+;**************************************************************
+
+Step    DC.B  0    ;Which step are we in? (Table in the report)
+PBFlg   DC.B  0    ;Is the PB pass set? (Also used to tell at which value we are)
+PotFlg  DC.B  0    ;Is the Pot pass set? (Also used to tell at which value we are)
+USFlg   DC.B  0    ;Is the US pass set? (Also used to tell at which value we are)
+PressFlg DC.B  0   ;Did any button get pressed recently?
+OrderFlg DC.B  0   ;Where are we in the order of the pass?
+
+CheckStpFlg DC.B  0 ;Check flag is cleared if steps are checked
+PassSetFlg  DC.B  0 ;Is the pass set?
+
+PassStatusFlg DC.B  0 ;(0->Nothing,1->Fail,2->Success)
+
+;**************************************************************
+;*                 Variables                                  *
+;**************************************************************
+
+PBSave  DS.B  4    ;Save the buttons order
+PotSave DS.B  2    ;Save the potentiometer values
+USSave  DS.B  2    ;Save the ultra-sonic values
+OrderSave DS.B  3  ;Save the order (1->PB,2->Pot,3->US)
+
+PBSave_Log  DS.B  4    ;Save the buttons order for Login
+PotSave_Log DS.B  2    ;Save the potentiometer values for Login
+USSave_Log  DS.B  2    ;Save the ultra-sonic values for Login
+OrderSave_Log DS.B  3  ;Save the order for Login (1->PB,2->Pot,3->US)
+
+PotValNorm  DS.B  1    ;Temporarily saves pot value as a normalized ASCII
+USValNorm   DS.B  1    ;Temporarily saves US value as a normalized ASCII
+PotValHex   DS.B  1    ;Temporarily saves pot value as a hexadecimal
+USValHex    DS.B  1    ;Temporarily saves US value as a hexadecimal
+
+;**************************************************************
+
+; code section
+            ORG   ROMStart
+
+
+Entry:
+_Startup:
+            LDS   #RAMEnd+1       ; initialize the stack pointer
+
+            CLI                     ; enable interrupts
+                   ; result in D
+;**************************************************************
+
+;**************************************************************
+;*                 Initializations                            *
+;**************************************************************             
+            JSR  Config_LCD
+            
+            JSR  Config_Buttons
+            
+            JSR  Config_LEDs
+            
+            JSR  Config_ATD
+
+;**************************************************************
+;*                 Main                                       *
+;************************************************************** 
+            JSR Start_Application
+
+Main
+            LDAA Step           ;The main loop is just used to print the values of the potentiometer and the  ultrasonic sensor in real-time
+            CMPA #$04           
+            BEQ Pot_step
+            CMPA #$05
+            BEQ US_step
+            CMPA #$0A
+            BEQ Pot_step_Log
+            CMPA #$0B
+            BEQ US_step_Log
+            LDAA PressFlg
+            CMPA #$00
+            BEQ Main
+            MOVB #$00,PressFlg
+            LDAA Step
+            CMPA #$00
+            BEQ ConfStep0
+            CMPA #$01
+            BEQ ConfStep1
+            CMPA #$02
+            BEQ ConfStep2
+            CMPA #$03
+            BEQ ConfStep3
+            CMPA #$06
+            BEQ ConfStep6
+            CMPA #$07
+            BEQ ConfStep7
+            CMPA #$08
+            BEQ ConfStep8
+            CMPA #$09
+            BEQ ConfStep9
+            JMP Main
+US_step     MOVB #$00,PressFlg
+            JMP US_Step
+Pot_step    MOVB #$00,PressFlg
+            JMP Pot_Step
+US_step_Log MOVB #$00,PressFlg
+            JMP US_Step_Log
+Pot_step_Log
+            MOVB #$00,PressFlg
+            JMP Pot_Step_Log                                    
+ConfStep0
+            JSR PassConfigPB
+            JMP Main
+ConfStep1
+            JSR PassConfigPot
+            JMP Main
+ConfStep2
+            JSR PassConfigUS
+            JMP Main
+ConfStep3            
+            JSR PBConfig
+            JMP Main
+
+ConfStep6
+            JSR PassLoginPB
+            JMP Main
+ConfStep7
+            JSR PassLoginPot
+            JMP Main
+ConfStep8
+            JSR PassLoginUS
+            JMP Main
+ConfStep9            
+            JSR PBCheck
+            JMP Main            
+Pot_Step            
+            LDAA PotFlg
+            CMPA #$00
+            BEQ Fetch_Pot_1
+            CMPA #$01
+            BEQ Fetch_Pot_2
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA PotSave
+            JSR Print_Pos_Pot
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAA PotSave+1
+            JSR Print_Pos_Pot
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP Main
+Fetch_Pot_1
+            JSR  Read_From_Pot
+            JSR  Delay
+            JSR  Fetch_Potentiometer
+            JSR  SetCursor_Line2_PB1_Pot1_US1
+            LDX  #PotValNorm
+            LDAB #$00
+            LDAA B,X
+            JSR  PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP  Main
+Fetch_Pot_2            
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA PotSave
+            JSR Print_Pos_Pot
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            JSR  Read_From_Pot
+            JSR  Delay
+            JSR  Fetch_Potentiometer
+            LDX  #PotValNorm
+            LDAB #$00
+            LDAA B,X
+            JSR  PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP  Main
+US_Step
+            LDAA USFlg
+            CMPA #$00
+            BEQ Fetch_US_1
+            CMPA #$01
+            BEQ Fetch_US_2
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA USSave
+            JSR Print_Pos_US
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAA USSave+1
+            JSR Print_Pos_US
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP Main
+Fetch_US_1
+            JSR  Read_From_US
+            JSR  Delay
+            JSR  Fetch_Ultrasonic
+            JSR  SetCursor_Line2_PB1_Pot1_US1
+            LDX  #USValNorm
+            LDAB #$00
+            LDAA B,X
+            JSR  PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP  Main
+Fetch_US_2            
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA USSave
+            JSR Print_Pos_US
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            JSR  Read_From_US
+            JSR  Delay
+            JSR  Fetch_Ultrasonic
+            LDX  #USValNorm
+            LDAB #$00
+            LDAA B,X
+            JSR  PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP Main
+            
+Pot_Step_Log            
+            LDAA PotFlg
+            CMPA #$00
+            BEQ Fetch_Pot_1_Log
+            CMPA #$01
+            BEQ Fetch_Pot_2_Log
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA PotSave_Log
+            JSR Print_Pos_Pot
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAA PotSave_Log+1
+            JSR Print_Pos_Pot
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP Main
+Fetch_Pot_1_Log
+            JSR  Read_From_Pot
+            JSR  Delay
+            JSR  Fetch_Potentiometer
+            JSR  SetCursor_Line2_PB1_Pot1_US1
+            LDX  #PotValNorm
+            LDAB #$00
+            LDAA B,X
+            JSR  PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP  Main
+Fetch_Pot_2_Log            
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA PotSave_Log
+            JSR Print_Pos_Pot
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            JSR  Read_From_Pot
+            JSR  Delay
+            JSR  Fetch_Potentiometer
+            LDX  #PotValNorm
+            LDAB #$00
+            LDAA B,X
+            JSR  PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP  Main
+US_Step_Log
+            LDAA USFlg
+            CMPA #$00
+            BEQ Fetch_US_1_Log
+            CMPA #$01
+            BEQ Fetch_US_2_Log
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA USSave_Log
+            JSR Print_Pos_US
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAA USSave_Log+1
+            JSR Print_Pos_US
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP Main
+Fetch_US_1_Log
+            JSR  Read_From_US
+            JSR  Delay
+            JSR  Fetch_Ultrasonic
+            JSR  SetCursor_Line2_PB1_Pot1_US1
+            LDX  #USValNorm
+            LDAB #$00
+            LDAA B,X
+            JSR  PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP  Main
+Fetch_US_2_Log            
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA USSave_Log
+            JSR Print_Pos_US
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            
+            JSR  Read_From_US
+            JSR  Delay
+            JSR  Fetch_Ultrasonic
+            LDX  #USValNorm
+            LDAB #$00
+            LDAA B,X
+            JSR  PRINT
+            
+            LDAB #$10
+            LDX  #UserInput
+            LDAA B,X
+            JSR PRINT
+            JMP Main            
+            
+;**************************************************************
+;*                 Steps subroutines                          *
+;**************************************************************
+Start_Application
+            JSR PassConfigPB
+            RTS
+
+PassConfigPB
+            MOVB #$01,CheckStpFlg                   ;Option to choose the PBs
+            PSHX
+            MOVB #$00,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #SetPassTxt
+            JSR Print_Line
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDX #PBTxt
+            JSR Print_Line
+            PULX
+            RTS
+            
+PassConfigPot                                       ;Option to choose the Pots
+            MOVB #$01,CheckStpFlg
+            PSHX
+            MOVB #$01,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #SetPassTxt
+            JSR Print_Line
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDX #PotTxt
+            JSR Print_Line
+            PULX
+            RTS
+                                    
+PassConfigUS                                         ;Option to choose the USs
+            MOVB #$01,CheckStpFlg
+            PSHX
+            MOVB #$02,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #SetPassTxt
+            JSR Print_Line
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDX #USTxt
+            JSR Print_Line
+            PULX
+            RTS
+            
+PBConfig
+            PSHX                                      ;The configuration of the PBs
+            MOVB #$03,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #PBTxt
+            JSR Print_Line
+            JSR Print_PBs
+            PULX
+            JSR Check_Step
+            RTS
+            
+PotConfig
+            PSHX                                       ;The configuration of the Pots
+            MOVB #$04,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #PotTxt
+            JSR Print_Line
+            JSR Print_Pots
+            PULX
+            JSR Check_Step
+            RTS
+            
+USConfig                       
+            PSHX                                        ;The configuration of the USs
+            MOVB #$05,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #USTxt
+            JSR Print_Line
+            JSR Print_USs
+            PULX
+            JSR Check_Step
+            RTS
+            
+PassLoginPB                                            ;Option to login with the PBs
+            MOVB #$01,CheckStpFlg
+            PSHX
+            PSHA
+            LDAA OrderFlg
+            CMPA #$00
+            BEQ  Continue_Log
+            CMPA #$01
+            BEQ  Continue_Log
+            CMPA #$02
+            BEQ  Continue_Log
+            MOVB #$00,OrderFlg
+            MOVB #$00,PBFlg
+            MOVB #$00,PotFlg
+            MOVB #$00,USFlg                                                                       
+Continue_Log                                             
+            JSR Light_Steps            
+            MOVB #$06,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #LoginTxt
+            JSR Print_Line
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDX #PBTxt
+            JSR Print_Line
+ExitLog     PULA
+            PULX
+            RTS
+            
+PassLoginPot                                            ;Option to login with the Pots
+            MOVB #$01,CheckStpFlg
+            PSHX
+            MOVB #$07,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #LoginTxt
+            JSR Print_Line
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDX #PotTxt
+            JSR Print_Line
+            PULX
+            RTS            
+
+PassLoginUS                                              ;Option to login with the USs
+            MOVB #$01,CheckStpFlg
+            PSHX
+            MOVB #$08,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #LoginTxt
+            JSR Print_Line
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDX #USTxt
+            JSR Print_Line
+            PULX
+            RTS
+            
+PBCheck
+            PSHX
+            MOVB #$09,Step                              ;PB values entering for login
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #PBTxt
+            JSR Print_Line
+            JSR Print_PBs
+            PULX
+            JSR Check_Step
+            RTS
+                                                       ;Pot values entering for login
+PotCheck
+            PSHX
+            MOVB #$0A,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #PotTxt
+            JSR Print_Line
+            JSR Print_Pots
+            PULX
+            JSR Check_Step
+            RTS
+            
+USCheck
+            PSHX                                      ;US values entering for login
+            MOVB #$0B,Step
+            JSR Light_Steps
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #USTxt
+            JSR Print_Line
+            JSR Print_USs
+            PULX
+            JSR Check_Step
+            RTS
+            
+ComparePass
+            PSHA                                        ;Compare passwords
+            JSR  Compare_PBs
+            LDAA PBFlg
+            CMPA #$06
+            BEQ  Procede_Cmp
+            JMP  Exit_Cmp_Fail
+Procede_Cmp 
+            JSR  Compare_Pots
+            LDAA PotFlg
+            CMPA #$04
+            BEQ  Procede_Cmp1
+            JMP  Exit_Cmp_Fail
+Procede_Cmp1 
+            JSR  Compare_USs
+            LDAA USFlg
+            CMPA #$04
+            BEQ  Procede_Cmp2
+            JMP  Exit_Cmp_Fail
+Procede_Cmp2 
+            JSR  Compare_Orders
+            LDAA OrderFlg
+            CMPA #$04
+            BEQ  Exit_Cmp_Succ
+            JMP  Exit_Cmp_Fail
+Exit_Cmp_Fail
+            PSHX
+            MOVB #$01,PassStatusFlg
+            MOVB #$0C,Step
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #FailTxt
+            JSR Print_Line
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDX #InstrTxt1
+            JSR Print_Line
+            PULX
+            JMP Exit_Cmp
+Exit_Cmp_Succ
+            PSHX
+            MOVB #$02,PassStatusFlg
+            MOVB #$0D,Step
+            JSR Clear_Display_Inc_Cursor
+            JSR SetCursor_Line1
+            LDX #SuccessTxt
+            JSR Print_Line
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDX #InstrTxt2
+            JSR Print_Line
+            PULX                        
+Exit_Cmp    PULA
+            RTS                                      
+                                                
+;**************************************************************
+;*                 Configurations                             *
+;**************************************************************             
+
+Compare_PBs
+            PSHA
+            LDAA PBSave                                ;Compare the push buttons
+            CMPA PBSave_Log
+            BEQ  CompPB1
+            JMP  Exit_CPBs_F
+CompPB1     LDAA PBSave+1
+            CMPA PBSave_Log+1
+            BEQ  CompPB2
+            JMP  Exit_CPBs_F
+CompPB2     LDAA PBSave+2
+            CMPA PBSave_Log+2
+            BEQ  CompPB3
+            JMP  Exit_CPBs_F
+CompPB3     LDAA PBSave+3
+            CMPA PBSave_Log+3
+            BEQ  Exit_CPBs_S
+            JMP  Exit_CPBs_F       
+                        
+Exit_CPBs_F MOVB #$00,PBFlg
+            JMP  Exit_CPBs
+Exit_CPBs_S MOVB #$06,PBFlg
+Exit_CPBs   PULA
+            RTS
+            
+Compare_Pots                                        ;Compare the potentiometer values
+            PSHA
+            LDAA PotSave
+            CMPA PotSave_Log
+            BEQ  CompPot1
+            JMP  Exit_CPots_F
+CompPot1    LDAA PotSave+1
+            CMPA PotSave_Log+1
+            BEQ  Exit_CPots_S
+            JMP  Exit_CPots_F      
+                        
+Exit_CPots_F
+            MOVB #$00,PotFlg
+            JMP  Exit_CPots
+Exit_CPots_S
+            MOVB #$04,PotFlg
+Exit_CPots  PULA
+            RTS  
+            
+Compare_USs
+            PSHA                                   ;Compare the ultrasonic sensor values
+            LDAA USSave
+            CMPA USSave_Log
+            BEQ  CompUS1
+            JMP  Exit_CUSs_F
+CompUS1     LDAA USSave+1
+            CMPA USSave_Log+1
+            BEQ  Exit_CUSs_S
+            JMP  Exit_CUSs_F      
+                        
+Exit_CUSs_F
+            MOVB #$00,USFlg
+            JMP  Exit_CUSs
+Exit_CUSs_S
+            MOVB #$04,USFlg
+Exit_CUSs   PULA
+            RTS
+                                                  ;Compare the order
+Compare_Orders
+            PSHA
+            LDAA OrderSave
+            CMPA OrderSave_Log
+            BEQ  CompOrder1
+            JMP  Exit_COrders_F
+CompOrder1  LDAA OrderSave+1
+            CMPA OrderSave_Log+1
+            BEQ  CompOrder2
+            JMP  Exit_COrders_F
+CompOrder2  LDAA OrderSave+2
+            CMPA OrderSave_Log+2
+            BEQ  Exit_COrders_S
+            JMP  Exit_COrders_F                  
+                        
+Exit_COrders_F
+            MOVB #$00,OrderFlg
+            JMP  Exit_COrders
+Exit_COrders_S
+            MOVB #$04,OrderFlg
+Exit_COrders
+            PULA
+            RTS                         
+                                               ;Check at which step we are
+Check_Step  PSHA
+            LDAA CheckStpFlg
+            CMPA #$00
+            BEQ  jmp_exit_Chk
+            MOVB #$00,CheckStpFlg
+            LDAA Step
+            CMPA #$00
+            BEQ  jmpChk_PassPB
+            CMPA #$01
+            BEQ  jmpChk_PassPot
+            CMPA #$02
+            BEQ  jmpChk_PassUS
+            CMPA #$03
+            BEQ  jmpChk_PBConfig
+            CMPA #$04
+            BEQ  jmpChk_PotConfig
+            CMPA #$05
+            BEQ  jmpChk_USConfig
+            CMPA #$06
+            BEQ  jmpChk_LogPB
+            CMPA #$07
+            BEQ  jmpChk_LogPot
+            CMPA #$08
+            BEQ  jmpChk_LogUS
+            CMPA #$09
+            BEQ  jmpChk_PBBChk
+            CMPA #$0A
+            BEQ  jmpChk_PotChk
+            CMPA #$0B
+            BEQ  jmpChk_USChk
+jmp_exit_Chk
+            JMP  Exit_ChkStp
+jmpChk_PassPB
+            JSR  PassConfigPB
+            JMP  Exit_ChkStp
+jmpChk_PassPot
+            JSR  PassConfigPot
+            JMP  Exit_ChkStp
+jmpChk_PassUS
+            JSR  PassConfigUS
+            JMP  Exit_ChkStp 
+jmpChk_PBConfig
+            JSR  PBConfig
+            JMP  Exit_ChkStp 
+jmpChk_PotConfig
+            JSR  PotConfig
+            JMP  Exit_ChkStp  
+jmpChk_USConfig
+            JSR  USConfig
+            JMP  Exit_ChkStp 
+jmpChk_LogPB
+            JSR  PassLoginPB
+            JMP  Exit_ChkStp
+jmpChk_LogPot
+            JSR  PassLoginPot
+            JMP  Exit_ChkStp
+jmpChk_LogUS
+            JSR  PassLoginUS
+            JMP  Exit_ChkStp 
+jmpChk_PBBChk
+            JSR  PBCheck
+            JMP  Exit_ChkStp 
+jmpChk_PotChk
+            JSR  PotCheck
+            JMP  Exit_ChkStp  
+jmpChk_USChk
+            JSR  USCheck
+            JMP  Exit_ChkStp                        
+Exit_ChkStp
+            PULA
+            RTS            
+
+Print_USs                                ;Print US values while taking into  consideration the position
+            PSHA                         ;in relation with what is already saved
+            PSHB                         
+            PSHX
+            
+            LDAA USFlg
+            CMPA #$01
+            BEQ  Print_1_US
+            CMPA #$02
+            BEQ  Print_2_US
+            CMPA #$03
+            BEQ  Print_2_US
+            JMP  Exit_PrintUSs
+Print_1_US
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_Uss
+            LDAA USSave_Log
+            BRA Procede_USS            
+Config_Uss  LDAA USSave
+Procede_USS 
+            JSR Print_Pos_US
+            JMP Exit_PrintUSs
+Print_2_US
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_Uss1
+            LDAA USSave_Log
+            BRA Procede_USS1            
+Config_Uss1 LDAA USSave
+Procede_USS1
+            JSR Print_Pos_US
+            JSR SetCursor_Line2_PB2_Pot2_US2
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_Uss2
+            LDAA USSave_Log+1
+            BRA Procede_USS2            
+Config_Uss2 LDAA USSave+1
+Procede_USS2
+            JSR Print_Pos_US
+            JMP Exit_PrintUSs            
+            
+Exit_PrintUSs 
+            PULX
+            PULB
+            PULA
+            RTS
+Print_Pos_US
+            CMPA #$0A
+            BEQ Print_1_Pos_US
+            CMPA #$0B
+            BEQ Print_2_Pos_US
+            CMPA #$0C
+            BEQ Print_3_Pos_US
+            CMPA #$0D
+            BEQ Print_4_Pos_US
+            CMPA #$0E
+            BEQ Print_5_Pos_US
+            LDAB #$0E
+            JMP Continue_Print_Pos_US
+Print_1_Pos_US
+            LDAB #$0A
+            JMP Continue_Print_Pos_US
+Print_2_Pos_US
+            LDAB #$0B
+            JMP Continue_Print_Pos_US
+Print_3_Pos_US
+            LDAB #$0C
+            JMP Continue_Print_Pos_US
+Print_4_Pos_US
+            LDAB #$0D
+            JMP Continue_Print_Pos_US
+Print_5_Pos_US
+            LDAB #$0E
+            JMP Continue_Print_Pos_US            
+Continue_Print_Pos_US
+            PSHX
+            LDX  #UserInput
+            LDAA B,X
+            PULX
+            JSR PRINT            
+            RTS            
+
+Print_Pots                                 ;Print Pot values while taking into  consideration the position
+            PSHA                           ;in relation with what is already saved
+            PSHB
+            PSHX
+            
+            LDAA PotFlg
+            CMPA #$01
+            BEQ  Print_1_Pot
+            CMPA #$02
+            BEQ  Print_2_Pot
+            CMPA #$03
+            BEQ  Print_2_Pot
+            JMP  Exit_PrintPots
+Print_1_Pot
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_Pots
+            LDAA PotSave_Log
+            BRA Procede_PotS            
+Config_Pots  LDAA PotSave
+Procede_PotS
+            JSR Print_Pos_Pot
+            JMP Exit_PrintPots
+Print_2_Pot
+            JSR SetCursor_Line2_PB1_Pot1_US1             
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_Pots1
+            LDAA PotSave_Log
+            BRA Procede_PotS1            
+Config_Pots1 LDAA PotSave
+Procede_PotS1
+            JSR Print_Pos_Pot
+            JSR SetCursor_Line2_PB2_Pot2_US2
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_Pots2
+            LDAA PotSave_Log+1
+            BRA Procede_PotS2            
+Config_Pots2 LDAA PotSave+1
+Procede_PotS2
+            JSR Print_Pos_Pot
+            JMP Exit_PrintPots            
+            
+Exit_PrintPots 
+            PULX
+            PULB
+            PULA
+            RTS
+Print_Pos_Pot
+            CMPA #$00
+            BEQ Print_0_Pos_Pot
+            CMPA #$01
+            BEQ Print_1_Pos_Pot
+            CMPA #$02
+            BEQ Print_2_Pos_Pot
+            CMPA #$03
+            BEQ Print_3_Pos_Pot
+            CMPA #$04
+            BEQ Print_4_Pos_Pot
+            CMPA #$05
+            BEQ Print_5_Pos_Pot
+            CMPA #$06
+            BEQ Print_6_Pos_Pot
+            CMPA #$07
+            BEQ Print_7_Pos_Pot
+            CMPA #$08
+            BEQ Print_8_Pos_Pot
+            CMPA #$09
+            BEQ Print_9_Pos_Pot
+            CMPA #$0A
+            BEQ Print_A_Pos_Pot
+            CMPA #$0B
+            BEQ Print_B_Pos_Pot
+            CMPA #$0C
+            BEQ Print_C_Pos_Pot
+            CMPA #$0D
+            BEQ Print_D_Pos_Pot
+            CMPA #$0E
+            BEQ Print_E_Pos_Pot
+            CMPA #$0F
+            BEQ Print_F_Pos_Pot
+            JMP Print_0_Pos_Pot
+            
+Print_0_Pos_Pot
+            LDAB #$00
+            JMP Continue_Print_Pos_Pot
+Print_1_Pos_Pot
+            LDAB #$01
+            JMP Continue_Print_Pos_Pot
+Print_2_Pos_Pot
+            LDAB #$02
+            JMP Continue_Print_Pos_Pot
+Print_3_Pos_Pot
+            LDAB #$03
+            JMP Continue_Print_Pos_Pot
+Print_4_Pos_Pot
+            LDAB #$04
+            JMP Continue_Print_Pos_Pot
+Print_5_Pos_Pot
+            LDAB #$05
+            JMP Continue_Print_Pos_Pot
+Print_6_Pos_Pot
+            LDAB #$06
+            JMP Continue_Print_Pos_Pot
+Print_7_Pos_Pot
+            LDAB #$07
+            JMP Continue_Print_Pos_Pot
+Print_8_Pos_Pot
+            LDAB #$08
+            JMP Continue_Print_Pos_Pot
+Print_9_Pos_Pot
+            LDAB #$09
+            JMP Continue_Print_Pos_Pot
+Print_A_Pos_Pot
+            LDAB #$0A
+            JMP Continue_Print_Pos_Pot
+Print_B_Pos_Pot
+            LDAB #$0B
+            JMP Continue_Print_Pos_Pot
+Print_C_Pos_Pot
+            LDAB #$0C
+            JMP Continue_Print_Pos_Pot
+Print_D_Pos_Pot
+            LDAB #$0D
+            JMP Continue_Print_Pos_Pot
+Print_E_Pos_Pot
+            LDAB #$0E
+            JMP Continue_Print_Pos_Pot
+Print_F_Pos_Pot
+            LDAB #$0F
+            JMP Continue_Print_Pos_Pot                        
+Continue_Print_Pos_Pot
+            PSHX
+            LDX  #UserInput
+            LDAA B,X
+            PULX
+            JSR PRINT            
+            RTS
+            RTS            
+           
+Print_PBs                                      ;Print PB values while taking into  consideration the position
+            PSHA                               ;in relation with what is already saved
+            PSHB
+            
+            LDAA PBFlg
+            CMPA #$01
+            BEQ Print_1_PB
+            CMPA #$02
+            BEQ Print_2_PB
+            CMPA #$03
+            BEQ Print_3_PB
+            CMPA #$04
+            BEQ Print_4_pb
+            CMPA #$05
+            BEQ Print_4_pb
+            JMP Exit_PrintPBs
+            
+Print_4_pb  JMP Print_4_PB            
+            
+Print_1_PB
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs
+            LDAA PBSave_Log
+            BRA Procede_PBS            
+Config_PBs   LDAA PBSave
+Procede_PBS
+            JSR Print_Pos_PB 
+            JMP Exit_PrintPBs            
+Print_2_PB
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs1
+            LDAA PBSave_Log
+            BRA Procede_PBS1            
+Config_PBs1  LDAA PBSave
+Procede_PBS1
+            JSR Print_Pos_PB
+            JSR SetCursor_Line2_PB2_Pot2_US2
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs2
+            LDAA PBSave_Log+1
+            BRA Procede_PBS2            
+Config_PBs2  LDAA PBSave+1
+Procede_PBS2
+            JSR Print_Pos_PB
+            JMP Exit_PrintPBs            
+Print_3_PB
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs3
+            LDAA PBSave_Log
+            BRA Procede_PBS3            
+Config_PBs3  LDAA PBSave
+Procede_PBS3
+            JSR Print_Pos_PB
+            JSR SetCursor_Line2_PB2_Pot2_US2
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs4
+            LDAA PBSave_Log+1
+            BRA Procede_PBS4            
+Config_PBs4  LDAA PBSave+1
+Procede_PBS4
+            JSR Print_Pos_PB
+            JSR SetCursor_Line2_PB3
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs5
+            LDAA PBSave_Log+2
+            BRA Procede_PBS5            
+Config_PBs5  LDAA PBSave+2
+Procede_PBS5
+            JSR Print_Pos_PB
+            JMP Exit_PrintPBs
+Print_4_PB
+            JSR SetCursor_Line2_PB1_Pot1_US1
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs6
+            LDAA PBSave_Log
+            BRA Procede_PBS6            
+Config_PBs6  LDAA PBSave
+Procede_PBS6
+            JSR Print_Pos_PB
+            JSR SetCursor_Line2_PB2_Pot2_US2
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs7
+            LDAA PBSave_Log+1
+            BRA Procede_PBS7            
+Config_PBs7  LDAA PBSave+1
+Procede_PBS7
+            JSR Print_Pos_PB
+            JSR SetCursor_Line2_PB3
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs8
+            LDAA PBSave_Log+2
+            BRA Procede_PBS8            
+Config_PBs8  LDAA PBSave+2
+Procede_PBS8
+            JSR Print_Pos_PB
+            JSR SetCursor_Line2_PB4
+            LDAA PassSetFlg
+            CMPA #$00
+            BEQ Config_PBs9
+            LDAA PBSave_Log+3
+            BRA Procede_PBS9            
+Config_PBs9 LDAA PBSave+3
+Procede_PBS9
+            JSR Print_Pos_PB
+            JMP Exit_PrintPBs                        
+Exit_PrintPBs
+            PULB
+            PULA
+            RTS
+            
+Print_Pos_PB
+            CMPA #$01
+            BEQ Print_1_Pos_1
+            CMPA #$02
+            BEQ Print_2_Pos_1
+            CMPA #$03
+            BEQ Print_3_Pos_1
+            CMPA #$04
+            BEQ Print_4_Pos_1
+            LDAB #$00
+            JMP Continue_Print_Pos_1
+Print_1_Pos_1
+            LDAB #$01
+            JMP Continue_Print_Pos_1
+Print_2_Pos_1
+            LDAB #$02
+            JMP Continue_Print_Pos_1
+Print_3_Pos_1
+            LDAB #$03
+            JMP Continue_Print_Pos_1
+Print_4_Pos_1
+            LDAB #$04
+            JMP Continue_Print_Pos_1
+Continue_Print_Pos_1
+            PSHX
+            LDX  #UserInput
+            LDAA B,X
+            PULX
+            JSR PRINT            
+            RTS            
+
+Fetch_Ultrasonic
+            PSHD
+            LDD ATD0DR1H            ;Read the value from register ATD0DR1H
+            TAB
+            ANDA #$00
+            STAB USValNorm
+            PULD
+            JSR  US_Normalization
+            RTS
+            
+Fetch_Potentiometer
+            PSHD
+            LDD ATD0DR5H            ;Read the value from register ATD0DR5H
+            TAB
+            ANDA #$00
+            STAB PotValNorm
+            PULD
+            JSR Pot_Normalization
+            RTS
+            
+Pot_Normalization
+            PSHA                    ;Normalizing from 0->255 to 0->F
+            LDAA PotValNorm
+            
+            CMPA #15
+            BLS  Set_Pot_0
+            CMPA #31
+            BLS  Set_Pot_1
+            CMPA #47
+            BLS  Set_Pot_2
+            CMPA #63
+            BLS  Set_Pot_3
+            CMPA #79
+            BLS  Set_Pot_4
+            CMPA #95
+            BLS  Set_Pot_5
+            CMPA #111
+            BLS  Set_Pot_6
+            CMPA #127
+            BLS  Set_Pot_7
+            CMPA #143
+            BLS  Set_Pot_8
+            CMPA #159
+            BLS  Set_Pot_9
+            CMPA #175
+            BLS  Set_Pot_A
+            CMPA #191
+            BLS  Set_Pot_B
+            CMPA #207
+            BLS  Set_Pot_C
+            CMPA #223
+            BLS  Set_Pot_D
+            CMPA #239
+            BLS  Set_Pot_E
+            CMPA #255
+            BLS  Set_Pot_F
+            JMP  Exit_Pot_Norm
+            
+Set_Pot_0   JMP set_Pot_0
+Set_Pot_1   JMP set_Pot_1
+Set_Pot_2   JMP set_Pot_2
+Set_Pot_3   JMP set_Pot_3
+Set_Pot_4   JMP set_Pot_4
+Set_Pot_5   JMP set_Pot_5
+Set_Pot_6   JMP set_Pot_6
+Set_Pot_7   JMP set_Pot_7
+Set_Pot_8   JMP set_Pot_8
+Set_Pot_9   JMP set_Pot_9
+Set_Pot_A   JMP set_Pot_A
+Set_Pot_B   JMP set_Pot_B
+Set_Pot_C   JMP set_Pot_C
+Set_Pot_D   JMP set_Pot_D
+Set_Pot_E   JMP set_Pot_E
+Set_Pot_F   JMP set_Pot_F
+            
+set_Pot_0   MOVB #48,PotValNorm
+            MOVB #$00,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_1   MOVB #49,PotValNorm
+            MOVB #$01,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_2   MOVB #50,PotValNorm
+            MOVB #$02,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_3   MOVB #51,PotValNorm
+            MOVB #$03,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_4   MOVB #52,PotValNorm
+            MOVB #$04,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_5   MOVB #53,PotValNorm
+            MOVB #$05,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_6   MOVB #54,PotValNorm
+            MOVB #$06,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_7   MOVB #55,PotValNorm
+            MOVB #$07,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_8   MOVB #56,PotValNorm
+            MOVB #$08,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_9   MOVB #57,PotValNorm
+            MOVB #$09,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_A   MOVB #65,PotValNorm
+            MOVB #$0A,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_B   MOVB #66,PotValNorm
+            MOVB #$0B,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_C   MOVB #67,PotValNorm
+            MOVB #$0C,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_D   MOVB #68,PotValNorm
+            MOVB #$0D,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_E   MOVB #69,PotValNorm
+            MOVB #$0E,PotValHex
+            JMP Exit_Pot_Norm
+set_Pot_F   MOVB #70,PotValNorm
+            MOVB #$0F,PotValHex
+            JMP Exit_Pot_Norm                        
+Exit_Pot_Norm
+            PULA
+            RTS
+            
+US_Normalization                     ;Normalizing from 4->8(or > 8) to A->E
+            PSHA
+            LDAA USValNorm
+            
+            CMPA #4
+            BEQ  Set_US_A
+            CMPA #5
+            BEQ  Set_US_B
+            CMPA #6
+            BEQ  Set_US_C
+            CMPA #7
+            BEQ  Set_US_D
+            JMP  Set_US_E
+Set_US_A
+            MOVB #65,USValNorm
+            MOVB #$0A,USValHex
+            JMP Exit_US_Norm
+Set_US_B
+            MOVB #66,USValNorm
+            MOVB #$0B,USValHex
+            JMP Exit_US_Norm
+Set_US_C
+            MOVB #67,USValNorm
+            MOVB #$0C,USValHex
+            JMP Exit_US_Norm
+Set_US_D
+            MOVB #68,USValNorm
+            MOVB #$0D,USValHex
+            JMP Exit_US_Norm
+Set_US_E            
+            MOVB #69,USValNorm
+            MOVB #$0E,USValHex
+            JMP Exit_US_Norm
+Exit_US_Norm
+            PULA
+            RTS                        
+
+Config_ATD
+            MOVB #$80, ATD0CTL2     ;Enabling ATD0
+            JSR  Delay
+            MOVB #$40, ATD0CTL3     
+            MOVB #$85, ATD0CTL4     
+            RTS
+            
+Read_From_US
+            MOVB #$21, ATD0CTL5     ;Scan mode on AN1 
+            RTS
+            
+Read_From_Pot            
+            MOVB #$25, ATD0CTL5     ;Scan mode on AN5
+            RTS
+            
+Config_LEDs
+            BSET DDRB,#$F0
+            MOVB #$E0,PORTB            
+            RTS                         
+            
+Config_Buttons
+            MOVB #$00,DDRP          ;Set input to ports P (0,1,2,4,5,7) 
+            MOVB #$B7,PERP          ;Set pull-up devices
+            
+            MOVB #$00,PPSP          ;Interrupt as falling edge
+            MOVB #$B7,PIEP          ;Enable interrupt
+            RTS
+
+SetCursor_Line1                     ;Line1 Pos0
+            LDAA #$88               
+            JSR SEND1
+            LDAA #$80               
+            JSR SEND1
+            JSR Delay
+            RTS
+SetCursor_Line2_PB1_Pot1_US1        ;Line2 Pos0                
+            LDAA #$8C               
+            JSR SEND1
+            LDAA #$80               
+            JSR SEND1
+            JSR Delay
+            RTS                        
+SetCursor_Line2_PB2_Pot2_US2         ;Line2 Pos2
+            LDAA #$8C               
+            JSR SEND1
+            LDAA #$82               
+            JSR SEND1
+            JSR Delay
+            RTS 
+SetCursor_Line2_PB3                   ;Line2 Pos4
+            LDAA #$8C               
+            JSR SEND1
+            LDAA #$84               
+            JSR SEND1
+            JSR Delay
+            RTS 
+SetCursor_Line2_PB4
+            LDAA #$8C                  ;Line2 Pos6
+            JSR SEND1
+            LDAA #$86               
+            JSR SEND1
+            JSR Delay
+            RTS                                                                        
+            
+Clear_Display_Inc_Cursor
+            PSHA
+            LDAA #$80               
+            JSR SEND1
+            LDAA #$81              ;Clear Display
+            JSR SEND1
+            JSR Delay
+            
+            LDAA #$80               
+            JSR SEND1               
+            LDAA #$86              ;Increment cursor   
+            JSR SEND1              
+            JSR Delay
+            PULA
+            RTS
+            
+Light_Steps                        ;Light the LEDs accordingly
+            PSHA  
+            LDAA OrderFlg
+            CMPA #$00
+            BEQ LED1_On
+            CMPA #$01
+            BEQ LED12_On
+            CMPA #$02                      
+            BEQ LED123_On
+            CMPA #$03
+            BEQ LEDs_On
+            JMP Exit_Light_Steps
+LED1_On     MOVB #$E0,PORTB
+            JMP Exit_Light_Steps
+LED12_On    MOVB #$C0,PORTB                        
+            JMP Exit_Light_Steps
+LED123_On   MOVB #$80,PORTB                        
+            JMP Exit_Light_Steps
+LEDs_On     MOVB #$00,PORTB                        
+            JMP Exit_Light_Steps                        
+Exit_Light_Steps
+            PULA
+            RTS                                    
+            
+Print_Line
+            PSHB
+            PSHA
+            
+            LDAB #$00
+Line        LDAA B,X
+            INCB
+            CMPA #$00
+            BEQ  Fnsh
+            JSR  PRINT
+            JMP  Line     
+Fnsh        PULA
+            PULB
+            RTS               
+            
+   
+SEND1       PSHB
+            BSR SEND_SPI            
+            NOP                     
+            ANDA #$7F               
+            BSR SEND_SPI            
+            NOP
+            PULB
+            RTS                
+
+SEND_SPI    STAA SPI0DR             
+            BRCLR SPI0SR,#$20,*     
+            LDAB SPI0SR             
+            RTS
+            
+PRINT       PSHB
+            PSHA
+            LDAB #$04                
+            ANDA #$F0               
+Rotate      RORA                    
+            DBNE B,Rotate
+            ORAA #$C0               
+            BSR SEND1
+            PULA                    
+            ANDA #$0F               
+            ORAA #$C0               
+            BSR SEND1
+            BSR Delay
+            PULB
+            RTS
+            
+Config_LCD            
+            BSET MODRR,#$10        
+            MOVB #$52, SPI0CR1      
+            MOVB #$10, SPI0CR2      
+            MOVB #$00, SPI0BR       
+            
+            
+            JSR Delay
+            
+            
+                  
+            LDAB #$03               
+LOOP1       LDAA #$83               
+            PSHB
+            JSR SEND1
+            JSR Delay
+            PULB
+            DBNE B,LOOP1
+            
+            LDAA #$82              
+            JSR SEND1
+            JSR Delay
+            
+            LDAA #$82              
+            JSR SEND1              
+            LDAA #$88
+            JSR SEND1
+            JSR Delay
+            
+            LDAA #$80              
+            JSR SEND1
+            LDAA #$88
+            JSR SEND1
+            JSR Delay
+                            
+            LDAA #$80               
+            JSR SEND1
+            LDAA #$81
+            JSR SEND1
+            JSR Delay
+            
+            LDAA #$80               
+            JSR SEND1               
+            LDAA #$84                  
+            JSR SEND1              
+            JSR Delay
+            
+
+            
+            LDAA #$80               
+            JSR SEND1
+            LDAA #$8C
+            JSR SEND1
+            JSR Delay
+            RTS             
+                        
+Delay       PSHX
+            PSHY
+            LDX #2                 
+DL1         LDY #1111
+            DBNE Y,*
+            DBNE X,DL1
+            PULY
+            PULX      
+            RTS
+            
+;**************************************************************
+;*                 Interrupt Subroutine                       *
+;**************************************************************            
+Pressed 
+            PSHA
+            LDAA PressFlg
+            CMPA #$00
+            BEQ Procede
+            PULA
+            JMP Exit
+Procede     LDAA PassSetFlg
+            CMPA #$00
+            BEQ Procede_1
+            JSR Pressed_Login
+            PULA
+            JMP Exit
+Procede_1   PULA            
+            MOVB #$01,PressFlg
+            BRSET PIFP,#$01,PB1             ;Check PB1 flag
+            BRSET PIFP,#$02,PB2             ;Check PB2 flag
+            BRSET PIFP,#$04,PB3             ;Check PB3 flag
+            BRSET PIFP,#$80,PB4             ;Check PB4 flag
+            BRSET PIFP,#$10,PB5             ;Check PB5 flag
+            BRSET PIFP,#$20,PB6             ;Check PB6 flag
+            JMP   Exit
+
+
+PB1
+            PSHA
+            LDAA  Step                     ;PB1 
+            CMPA  #$03
+            BEQ   EnterPB1
+            PULA
+            JMP   Exit
+EnterPB1    LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SetPB1Value1
+            CMPA  #$01
+            BEQ   SetPB1Value2
+            CMPA  #$02
+            BEQ   SetPB1Value3
+            CMPA  #$03
+            BEQ   SetPB1Value4
+            JMP   EndPB1
+SetPB1Value1
+            MOVB  #$01,PBSave
+            INC   PBFlg
+            JMP   EndPB1
+SetPB1Value2                        
+            MOVB  #$01,PBSave+1
+            INC   PBFlg
+            JMP   EndPB1         
+SetPB1Value3                        
+            MOVB  #$01,PBSave+2
+            INC   PBFlg
+            JMP   EndPB1
+SetPB1Value4                        
+            MOVB  #$01,PBSave+3
+            INC   PBFlg
+            JMP   EndPB1            
+            
+EndPB1      PULA
+            JSR   PBConfig
+            JMP   Exit
+
+PB3         JMP   Button3               ;Because of the error "Value out of range -128..127"
+PB4         JMP   Button4               
+PB5         JMP   Button5               
+PB6         JMP   Button6               
+
+PB2
+            PSHA                            ;PB2
+            LDAA  Step
+            CMPA  #$03
+            BEQ   EnterPB2
+            PULA
+            JMP   Exit
+EnterPB2    LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SetPB2Value1
+            CMPA  #$01
+            BEQ   SetPB2Value2
+            CMPA  #$02
+            BEQ   SetPB2Value3
+            CMPA  #$03
+            BEQ   SetPB2Value4
+            JMP   EndPB2
+SetPB2Value1
+            MOVB  #$02,PBSave
+            INC   PBFlg
+            JMP   EndPB2
+SetPB2Value2                        
+            MOVB  #$02,PBSave+1
+            INC   PBFlg
+            JMP   EndPB2         
+SetPB2Value3                        
+            MOVB  #$02,PBSave+2
+            INC   PBFlg
+            JMP   EndPB2
+SetPB2Value4                        
+            MOVB  #$02,PBSave+3
+            INC   PBFlg
+            JMP   EndPB2            
+            
+EndPB2      PULA
+            JSR   PBConfig
+            JMP   Exit
+            
+
+Button3
+            PSHA                             ;PB3
+            LDAA  Step
+            CMPA  #$03
+            BEQ   EnterPB3
+            PULA
+            JMP   Exit
+EnterPB3    LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SetPB3Value1
+            CMPA  #$01
+            BEQ   SetPB3Value2
+            CMPA  #$02
+            BEQ   SetPB3Value3
+            CMPA  #$03
+            BEQ   SetPB3Value4
+            JMP   EndPB3
+SetPB3Value1
+            MOVB  #$03,PBSave
+            INC   PBFlg
+            JMP   EndPB3
+SetPB3Value2                        
+            MOVB  #$03,PBSave+1
+            INC   PBFlg
+            JMP   EndPB3         
+SetPB3Value3                        
+            MOVB  #$03,PBSave+2
+            INC   PBFlg
+            JMP   EndPB3
+SetPB3Value4                        
+            MOVB  #$03,PBSave+3
+            INC   PBFlg
+            JMP   EndPB3            
+            
+EndPB3      PULA
+            JSR   PBConfig
+            JMP   Exit
+Button4
+            PSHA                        ;PB4
+            LDAA  Step
+            CMPA  #$03
+            BEQ   EnterPB4
+            PULA
+            JMP   Exit
+EnterPB4    LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SetPB4Value1
+            CMPA  #$01
+            BEQ   SetPB4Value2
+            CMPA  #$02
+            BEQ   SetPB4Value3
+            CMPA  #$03
+            BEQ   SetPB4Value4
+            JMP   EndPB4
+SetPB4Value1
+            MOVB  #$04,PBSave
+            INC   PBFlg
+            JMP   EndPB4
+SetPB4Value2                        
+            MOVB  #$04,PBSave+1
+            INC   PBFlg
+            JMP   EndPB4         
+SetPB4Value3                        
+            MOVB  #$04,PBSave+2
+            INC   PBFlg
+            JMP   EndPB4
+SetPB4Value4                        
+            MOVB  #$04,PBSave+3
+            INC   PBFlg
+            JMP   EndPB4            
+            
+EndPB4      PULA
+            JSR   PBConfig
+            JMP   Exit
+Button5     PSHA
+
+            LDAA  Step                     ;PB5
+            CMPA  #$00
+            BEQ   EnterPBconf
+            CMPA  #$01
+            BEQ   EnterPotconf
+            CMPA  #$02
+            BEQ   EnterUSconf
+            CMPA  #$03
+            BEQ   EnterPB
+            CMPA  #$04
+            BEQ   EnterPot
+            CMPA  #$05
+            BEQ   EnterUS
+            JMP   EndPB5
+            
+EnterPot    JMP   Enterpot
+EnterUS     JMP   enterUS            
+            
+EnterPBconf
+            JSR   PBConfig
+            JMP   EndPB5
+EnterPotconf
+            JSR   PotConfig
+            JMP   EndPB5
+EnterUSconf
+            JSR   USConfig
+            JMP   EndPB5
+EnterPB
+            LDAA  PBFlg
+            CMPA  #$04
+            BEQ   SavePB
+            JMP   EndPB5
+SavePB      INC   PBFlg
+
+            LDAA  OrderFlg
+            CMPA  #$00
+            BEQ   SavePBOrder1
+            CMPA  #$01
+            BEQ   SavePBOrder2
+            CMPA  #$02
+            BEQ   SavePBOrder3
+            JMP   SkipSaveOrderPB
+SavePBOrder1
+            MOVB #$01,OrderSave
+            JMP  EndSaveOrderPB
+SavePBOrder2
+            MOVB #$01,OrderSave+1
+            JMP  EndSaveOrderPB
+SavePBOrder3
+            MOVB #$01,OrderSave+2
+            JMP  EndSaveOrderPB            
+EndSaveOrderPB
+            INC   OrderFlg
+            JSR  Light_Steps
+SkipSaveOrderPB
+            LDAA PotFlg
+            CMPA #$03
+            BEQ tryUS_PB
+            JMP ConfigPotNext
+tryUS_PB    LDAA USFlg
+            CMPA #$03
+            BEQ donePassConfig
+            JMP ConfigUSNext
+ConfigPotNext
+            JSR PassConfigPot
+            JMP EndPB5
+ConfigUSNext
+            JSR PassConfigUS
+            JMP EndPB5
+donePassConfig
+            JSR PassLoginPB
+            MOVB #$01,PassSetFlg             
+            JMP EndPB5
+Enterpot
+            LDAA  PotFlg
+            CMPA  #$00
+            BEQ   Save_Pot_1
+            CMPA  #$01
+            BEQ   Save_Pot_2
+            CMPA  #$02
+            BEQ   Save_Pot
+            JMP   EndPB5
+Save_Pot_1            
+            JSR  Read_From_Pot
+            JSR  Delay
+            JSR  Fetch_Potentiometer
+            LDAA PotValHex
+            STAA PotSave
+            JSR  PotConfig
+            INC  PotFlg
+            JMP  EndPB5
+Save_Pot_2
+            JSR  Read_From_Pot
+            JSR  Delay
+            JSR  Fetch_Potentiometer
+            LDAA PotValHex
+            STAA PotSave+1
+            JSR  PotConfig
+            INC  PotFlg
+            JMP  EndPB5
+Save_Pot
+            INC  PotFlg
+            
+            LDAA  OrderFlg
+            CMPA  #$00
+            BEQ   SavePotOrder1
+            CMPA  #$01
+            BEQ   SavePotOrder2
+            CMPA  #$02
+            BEQ   SavePotOrder3
+            JMP   SkipSaveOrderPot
+SavePotOrder1
+            MOVB #$02,OrderSave
+            JMP  EndSaveOrderPot
+SavePotOrder2
+            MOVB #$02,OrderSave+1
+            JMP  EndSaveOrderPot
+SavePotOrder3
+            MOVB #$02,OrderSave+2
+            JMP  EndSaveOrderPot            
+EndSaveOrderPot
+            INC   OrderFlg
+            JSR  Light_Steps
+SkipSaveOrderPot
+            LDAA USFlg
+            CMPA #$03
+            BEQ tryPB_Pot
+            JMP ConfigUSNext
+tryPB_Pot   LDAA PBFlg
+            CMPA #$05
+            BEQ DonePassConfig
+            JMP ConfigPBNext
+ConfigPBNext
+            JSR PassConfigPB
+            JMP EndPB5
+                                    
+            JMP EndPB5            
+enterUS       
+            LDAA  USFlg
+            CMPA  #$00
+            BEQ   Save_US_1
+            CMPA  #$01
+            BEQ   Save_US_2
+            CMPA  #$02
+            BEQ   Save_US
+            JMP   EndPB5
+
+DonePassConfig JMP donePassConfig            
+     
+Save_US_1            
+            JSR  Read_From_US
+            JSR  Delay
+            JSR  Fetch_Ultrasonic
+            LDAA USValHex
+            STAA USSave
+            JSR  USConfig
+            INC  USFlg
+            JMP  EndPB5
+Save_US_2
+            JSR  Read_From_US
+            JSR  Delay
+            JSR  Fetch_Ultrasonic
+            LDAA USValHex
+            STAA USSave+1
+            JSR  USConfig
+            INC  USFlg
+            JMP  EndPB5
+Save_US
+            INC  USFlg
+            
+            LDAA  OrderFlg
+            CMPA  #$00
+            BEQ   SaveUSOrder1
+            CMPA  #$01
+            BEQ   SaveUSOrder2
+            CMPA  #$02
+            BEQ   SaveUSOrder3
+            JMP   SkipSaveOrderUS
+SaveUSOrder1
+            MOVB #$03,OrderSave
+            JMP  EndSaveOrderUS
+SaveUSOrder2
+            MOVB #$03,OrderSave+1
+            JMP  EndSaveOrderUS
+SaveUSOrder3
+            MOVB #$03,OrderSave+2
+            JMP  EndSaveOrderUS            
+EndSaveOrderUS
+            INC   OrderFlg
+            JSR  Light_Steps
+SkipSaveOrderUS
+            LDAA PBFlg
+            CMPA #$05
+            BEQ tryPot_US
+            JMP ConfigPBNext
+tryPot_US   LDAA PotFlg
+            CMPA #$03
+            BEQ DonePassConfig
+            JMP ConfigPotNext
+     
+            JMP EndPB5
+            
+EndPB5      PULA   
+            JMP   Exit
+            
+Button6     PSHA
+
+            LDAA  Step                   ;PB6
+            CMPA  #$00
+            BEQ   SkipPBconf
+            CMPA  #$01
+            BEQ   SkipPotconf
+            CMPA  #$02
+            BEQ   SkipUSconf
+            CMPA  #$03
+            BEQ   DelPB
+            CMPA  #$04
+            BEQ   DelPot
+            CMPA  #$05
+            BEQ   DelUS
+            JMP   EndPB6
+            
+SkipPBconf
+            LDAA  PotFlg
+            CMPA  #$03
+            BEQ   try_US_Skip
+            JSR   PassConfigPot
+            JMP   EndPB6
+try_US_Skip LDAA  USFlg
+            CMPA  #$03
+            BEQ   DoneConfig
+            JSR   PassConfigUS            
+            JMP   EndPB6
+SkipPotconf
+            LDAA  USFlg
+            CMPA  #$03
+            BEQ   try_PB_Skip
+            JSR   PassConfigUS
+            JMP   EndPB6
+try_PB_Skip LDAA  PBFlg
+            CMPA  #$05
+            BEQ   DoneConfig
+            JSR   PassConfigPB
+            JMP   EndPB6           
+SkipUSconf
+            LDAA  PBFlg
+            CMPA  #$05
+            BEQ   try_Pot_Skip
+            JSR   PassConfigPB
+            JMP   EndPB6
+try_Pot_Skip
+            LDAA  PotFlg
+            CMPA  #$03
+            BEQ   DoneConfig
+            JSR   PassConfigPot            
+            JMP   EndPB6            
+DoneConfig
+            ;JSR PassLoginPB 
+            JMP   EndPB6            
+DelPB
+            LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SkipUSconf
+            CMPA  #$05
+            BEQ   EndPB6
+            DEC   PBFlg
+            JSR   PBConfig            
+            JMP   EndPB6
+DelPot
+            LDAA  PotFlg
+            CMPA  #$00
+            BEQ   SkipPBconf
+            CMPA  #$03
+            BEQ   EndPB6
+            DEC   PotFlg
+            JSR   PotConfig            
+            JMP   EndPB6
+DelUS       
+            LDAA  USFlg
+            CMPA  #$00
+            BEQ   SkipPotconf
+            CMPA  #$03
+            BEQ   EndPB6
+            DEC   USFlg
+            JSR   USConfig            
+            JMP   EndPB6
+            
+EndPB6      PULA
+            JMP   Exit            
+Exit
+            BSET PIFP,#$B7                  ;Reset PB flags
+            RTI            
+
+;**************************************************************
+;*                 Subroutines for interrupt subroutines      *
+;**************************************************************                                         
+                                                                  ;Used for login
+Pressed_Login 
+            BRSET PIFP,#$01,PB1_Log             ;Check PB1 flag
+            BRSET PIFP,#$02,PB2_Log             ;Check PB2 flag
+            BRSET PIFP,#$04,PB3_Log             ;Check PB3 flag
+            BRSET PIFP,#$80,PB4_Log             ;Check PB4 flag
+            BRSET PIFP,#$10,PB5_Log             ;Check PB5 flag
+            BRSET PIFP,#$20,PB6_Log             ;Check PB6 flag
+            JMP   Exit_Log
+
+
+PB1_Log
+            PSHA
+            LDAA  Step
+            CMPA  #$09                            ;PB1
+            BEQ   EnterPB1_Log
+            PULA
+            JMP   Exit_Log
+EnterPB1_Log
+            LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SetPB1Value1_Log
+            CMPA  #$01
+            BEQ   SetPB1Value2_Log
+            CMPA  #$02
+            BEQ   SetPB1Value3_Log
+            CMPA  #$03
+            BEQ   SetPB1Value4_Log
+            JMP   EndPB1_Log
+SetPB1Value1_Log
+            MOVB  #$01,PBSave_Log
+            INC   PBFlg
+            JMP   EndPB1_Log
+SetPB1Value2_Log                        
+            MOVB  #$01,PBSave_Log+1
+            INC   PBFlg
+            JMP   EndPB1_Log         
+SetPB1Value3_Log                        
+            MOVB  #$01,PBSave_Log+2
+            INC   PBFlg
+            JMP   EndPB1_Log
+SetPB1Value4_Log                        
+            MOVB  #$01,PBSave_Log+3
+            INC   PBFlg
+            JMP   EndPB1_Log            
+            
+EndPB1_Log
+            PULA
+            JSR   PBCheck
+            JMP   Exit_Log
+
+PB3_Log         JMP   Button3_Log               ;Because of the error "Value out of range -128..127"
+PB4_Log         JMP   Button4_Log               
+PB5_Log         JMP   Button5_Log               
+PB6_Log         JMP   Button6_Log               
+
+PB2_Log
+            PSHA
+            LDAA  Step                        ;PB2
+            CMPA  #$09
+            BEQ   EnterPB2_Log
+            PULA
+            JMP   Exit_Log
+EnterPB2_Log
+            LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SetPB2Value1_Log
+            CMPA  #$01
+            BEQ   SetPB2Value2_Log
+            CMPA  #$02
+            BEQ   SetPB2Value3_Log
+            CMPA  #$03
+            BEQ   SetPB2Value4_Log
+            JMP   EndPB2_Log
+SetPB2Value1_Log
+            MOVB  #$02,PBSave_Log
+            INC   PBFlg
+            JMP   EndPB2_Log
+SetPB2Value2_Log                        
+            MOVB  #$02,PBSave_Log+1
+            INC   PBFlg
+            JMP   EndPB2_Log         
+SetPB2Value3_Log                        
+            MOVB  #$02,PBSave_Log+2
+            INC   PBFlg
+            JMP   EndPB2_Log
+SetPB2Value4_Log                        
+            MOVB  #$02,PBSave_Log+3
+            INC   PBFlg
+            JMP   EndPB2_Log            
+            
+EndPB2_Log
+            PULA
+            JSR   PBCheck
+            JMP   Exit_Log
+            
+
+Button3_Log
+            PSHA                           ;PB3
+            LDAA  Step
+            CMPA  #$09
+            BEQ   EnterPB3_Log
+            PULA
+            JMP   Exit_Log
+EnterPB3_Log
+            LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SetPB3Value1_Log
+            CMPA  #$01
+            BEQ   SetPB3Value2_Log
+            CMPA  #$02
+            BEQ   SetPB3Value3_Log
+            CMPA  #$03
+            BEQ   SetPB3Value4_Log
+            JMP   EndPB3_Log
+SetPB3Value1_Log
+            MOVB  #$03,PBSave_Log
+            INC   PBFlg
+            JMP   EndPB3_Log
+SetPB3Value2_Log                        
+            MOVB  #$03,PBSave_Log+1
+            INC   PBFlg
+            JMP   EndPB3_Log         
+SetPB3Value3_Log                        
+            MOVB  #$03,PBSave_Log+2
+            INC   PBFlg
+            JMP   EndPB3_Log
+SetPB3Value4_Log                        
+            MOVB  #$03,PBSave_Log+3
+            INC   PBFlg
+            JMP   EndPB3_Log            
+            
+EndPB3_Log
+            PULA
+            JSR   PBCheck
+            JMP   Exit_Log
+Button4_Log
+            PSHA
+            LDAA  Step                        ;PB4
+            CMPA  #$09
+            BEQ   EnterPB4_Log
+            PULA
+            JMP   Exit_Log
+EnterPB4_Log
+            LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SetPB4Value1_Log
+            CMPA  #$01
+            BEQ   SetPB4Value2_Log
+            CMPA  #$02
+            BEQ   SetPB4Value3_Log
+            CMPA  #$03
+            BEQ   SetPB4Value4_Log
+            JMP   EndPB4_Log
+SetPB4Value1_Log
+            MOVB  #$04,PBSave_Log
+            INC   PBFlg
+            JMP   EndPB4_Log
+SetPB4Value2_Log                        
+            MOVB  #$04,PBSave_Log+1
+            INC   PBFlg
+            JMP   EndPB4_Log         
+SetPB4Value3_Log                        
+            MOVB  #$04,PBSave_Log+2
+            INC   PBFlg
+            JMP   EndPB4_Log
+SetPB4Value4_Log                        
+            MOVB  #$04,PBSave_Log+3
+            INC   PBFlg
+            JMP   EndPB4_Log            
+            
+EndPB4_Log  PULA
+            JSR   PBCheck
+            JMP   Exit_Log
+Button5_Log PSHA
+                                                 ;PB5
+            LDAA  PassStatusFlg
+            CMPA  #$00                  
+            BEQ   ContinuePB5
+            CMPA  #$01
+            BEQ   FailPassAttempt
+            CMPA  #$02
+            BEQ   SuccessPassAttempt
+            JMP   ContinuePB5
+FailPassAttempt
+            MOVB  #$00,PassStatusFlg
+            JSR   PassLoginPB
+            JMP   EndPB5_Log
+SuccessPassAttempt
+            MOVB  #$00,PassStatusFlg
+            MOVB  #$00,OrderFlg
+            MOVB  #$00,PBFlg
+            MOVB  #$00,PotFlg
+            MOVB  #$00,USFlg
+            MOVB  #$00,PassSetFlg
+            JSR   Start_Application
+            JMP   EndPB5_Log                    
+ContinuePB5 LDAA  Step
+            CMPA  #$06
+            BEQ   EnterPBconf_Log
+            CMPA  #$07
+            BEQ   EnterPotconf_Log
+            CMPA  #$08
+            BEQ   EnterUSconf_Log
+            CMPA  #$09
+            BEQ   EnterPB_Log
+            CMPA  #$0A
+            BEQ   EnterPot_Log
+            CMPA  #$0B
+            BEQ   EnterUS_Log
+            JMP   EndPB5_Log
+            
+EnterPot_Log    JMP   Enterpot_Log
+EnterUS_Log     JMP   enterUS_Log            
+            
+EnterPBconf_Log
+            JSR   PBCheck
+            JMP   EndPB5_Log
+EnterPotconf_Log
+            JSR   PotCheck
+            JMP   EndPB5_Log
+EnterUSconf_Log
+            JSR   USCheck
+            JMP   EndPB5_Log
+EnterPB_Log
+            LDAA  PBFlg
+            CMPA  #$04
+            BEQ   SavePB_Log
+            JMP   EndPB5_Log
+SavePB_Log  INC   PBFlg
+
+            LDAA  OrderFlg
+            CMPA  #$00
+            BEQ   SavePBOrder1_Log
+            CMPA  #$01
+            BEQ   SavePBOrder2_Log
+            CMPA  #$02
+            BEQ   SavePBOrder3_Log
+            JMP   SkipSaveOrderPB_Log
+SavePBOrder1_Log
+            MOVB #$01,OrderSave_Log
+            JMP  EndSaveOrderPB_Log
+SavePBOrder2_Log
+            MOVB #$01,OrderSave_Log+1
+            JMP  EndSaveOrderPB_Log
+SavePBOrder3_Log
+            MOVB #$01,OrderSave_Log+2
+            JMP  EndSaveOrderPB_Log            
+EndSaveOrderPB_Log
+            INC   OrderFlg
+            JSR  Light_Steps
+SkipSaveOrderPB_Log
+            LDAA PotFlg
+            CMPA #$03
+            BEQ tryUS_PB_Log
+            JMP ConfigPotNext_Log
+tryUS_PB_Log
+            LDAA USFlg
+            CMPA #$03
+            BEQ donePassConfig_Log
+            JMP ConfigUSNext_Log
+ConfigPotNext_Log
+            JSR PassLoginPot
+            JMP EndPB5_Log
+ConfigUSNext_Log
+            JSR PassLoginUS
+            JMP EndPB5_Log
+donePassConfig_Log
+            JSR ComparePass
+            MOVB #$02,PassSetFlg             
+            JMP EndPB5_Log
+Enterpot_Log
+            LDAA  PotFlg
+            CMPA  #$00
+            BEQ   Save_Pot_1_Log
+            CMPA  #$01
+            BEQ   Save_Pot_2_Log
+            CMPA  #$02
+            BEQ   Save_Pot_Log
+            JMP   EndPB5_Log
+Save_Pot_1_Log            
+            JSR  Read_From_Pot
+            JSR  Delay
+            JSR  Fetch_Potentiometer
+            LDAA PotValHex
+            STAA PotSave_Log
+            JSR  PotCheck
+            INC  PotFlg
+            JMP  EndPB5_Log
+Save_Pot_2_Log
+            JSR  Read_From_Pot
+            JSR  Delay
+            JSR  Fetch_Potentiometer
+            LDAA PotValHex
+            STAA PotSave_Log+1
+            JSR  PotCheck
+            INC  PotFlg
+            JMP  EndPB5_Log
+Save_Pot_Log
+            INC  PotFlg
+            
+            LDAA  OrderFlg
+            CMPA  #$00
+            BEQ   SavePotOrder1_Log
+            CMPA  #$01
+            BEQ   SavePotOrder2_Log
+            CMPA  #$02
+            BEQ   SavePotOrder3_Log
+            JMP   SkipSaveOrderPot_Log
+SavePotOrder1_Log
+            MOVB #$02,OrderSave_Log
+            JMP  EndSaveOrderPot_Log
+SavePotOrder2_Log
+            MOVB #$02,OrderSave_Log+1
+            JMP  EndSaveOrderPot_Log
+SavePotOrder3_Log
+            MOVB #$02,OrderSave_Log+2
+            JMP  EndSaveOrderPot_Log            
+EndSaveOrderPot_Log
+            INC   OrderFlg
+            JSR  Light_Steps
+SkipSaveOrderPot_Log
+            LDAA USFlg
+            CMPA #$03
+            BEQ tryPB_Pot_Log
+            JMP ConfigUSNext_Log
+tryPB_Pot_Log
+            LDAA PBFlg
+            CMPA #$05
+            BEQ DonePassConfig_Log
+            JMP ConfigPBNext_Log
+ConfigPBNext_Log
+            JSR PassLoginPB
+            JMP EndPB5_Log
+                                    
+            JMP EndPB5_Log            
+enterUS_Log       
+            LDAA  USFlg
+            CMPA  #$00
+            BEQ   Save_US_1_Log
+            CMPA  #$01
+            BEQ   Save_US_2_Log
+            CMPA  #$02
+            BEQ   Save_US_Log
+            JMP   EndPB5_Log
+
+DonePassConfig_Log JMP donePassConfig_Log            
+     
+Save_US_1_Log            
+            JSR  Read_From_US
+            JSR  Delay
+            JSR  Fetch_Ultrasonic
+            LDAA USValHex
+            STAA USSave_Log
+            JSR  USCheck
+            INC  USFlg
+            JMP  EndPB5_Log
+Save_US_2_Log
+            JSR  Read_From_US
+            JSR  Delay
+            JSR  Fetch_Ultrasonic
+            LDAA USValHex
+            STAA USSave_Log+1
+            JSR  USCheck
+            INC  USFlg
+            JMP  EndPB5_Log
+Save_US_Log
+            INC  USFlg
+            
+            LDAA  OrderFlg
+            CMPA  #$00
+            BEQ   SaveUSOrder1_Log
+            CMPA  #$01
+            BEQ   SaveUSOrder2_Log
+            CMPA  #$02
+            BEQ   SaveUSOrder3_Log
+            JMP   SkipSaveOrderUS_Log
+SaveUSOrder1_Log
+            MOVB #$03,OrderSave_Log
+            JMP  EndSaveOrderUS_Log
+SaveUSOrder2_Log
+            MOVB #$03,OrderSave_Log+1
+            JMP  EndSaveOrderUS_Log
+SaveUSOrder3_Log
+            MOVB #$03,OrderSave_Log+2
+            JMP  EndSaveOrderUS_Log            
+EndSaveOrderUS_Log
+            INC   OrderFlg
+            JSR  Light_Steps
+SkipSaveOrderUS_Log
+            LDAA PBFlg
+            CMPA #$05
+            BEQ tryPot_US_Log
+            JMP ConfigPBNext_Log
+tryPot_US_Log
+            LDAA PotFlg
+            CMPA #$03
+            BEQ DonePassConfig_Log
+            JMP ConfigPotNext_Log
+     
+            JMP EndPB5_Log
+            
+EndPB5_Log  PULA   
+            JMP   Exit_Log
+            
+Button6_Log PSHA
+                                            ;PB6
+            LDAA  Step
+            CMPA  #$06
+            BEQ   SkipPBconf_Log
+            CMPA  #$07
+            BEQ   SkipPotconf_Log
+            CMPA  #$08
+            BEQ   SkipUSconf_Log
+            CMPA  #$09
+            BEQ   DelPB_Log
+            CMPA  #$0A
+            BEQ   DelPot_Log
+            CMPA  #$0B
+            BEQ   DelUS_Log
+            JMP   EndPB6_Log
+            
+SkipPBconf_Log
+            LDAA  PotFlg
+            CMPA  #$03
+            BEQ   try_US_Skip_Log
+            JSR   PassLoginPot
+            JMP   EndPB6_Log
+try_US_Skip_Log
+            LDAA  USFlg
+            CMPA  #$03
+            BEQ   DoneConfig_Log
+            JSR   PassLoginUS            
+            JMP   EndPB6_Log
+SkipPotconf_Log
+            LDAA  USFlg
+            CMPA  #$03
+            BEQ   try_PB_Skip_Log
+            JSR   PassLoginUS
+            JMP   EndPB6_Log
+try_PB_Skip_Log
+            LDAA  PBFlg
+            CMPA  #$05
+            BEQ   DoneConfig_Log
+            JSR   PassLoginPB
+            JMP   EndPB6_Log           
+SkipUSconf_Log
+            LDAA  PBFlg
+            CMPA  #$05
+            BEQ   try_Pot_Skip_Log
+            JSR   PassLoginPB
+            JMP   EndPB6_Log
+try_Pot_Skip_Log
+            LDAA  PotFlg
+            CMPA  #$03
+            BEQ   DoneConfig_Log
+            JSR   PassLoginPot            
+            JMP   EndPB6_Log            
+DoneConfig_Log
+            JSR   ComparePass                        
+            JMP   EndPB6_Log            
+DelPB_Log
+            LDAA  PBFlg
+            CMPA  #$00
+            BEQ   SkipUSconf_Log
+            CMPA  #$05
+            BEQ   EndPB6_Log
+            DEC   PBFlg
+            JSR   PBCheck            
+            JMP   EndPB6_Log
+DelPot_Log
+            LDAA  PotFlg
+            CMPA  #$00
+            BEQ   SkipPBconf_Log
+            CMPA  #$03
+            BEQ   EndPB6_Log
+            DEC   PotFlg
+            JSR   PotCheck            
+            JMP   EndPB6_Log
+DelUS_Log       
+            LDAA  USFlg
+            CMPA  #$00
+            BEQ   SkipPotconf_Log
+            CMPA  #$03
+            BEQ   EndPB6_Log
+            DEC   USFlg
+            JSR   USCheck            
+            JMP   EndPB6_Log
+            
+EndPB6_Log  PULA
+            JMP   Exit_Log            
+Exit_Log
+            RTS
+
+;**************************************************************
+;*                 Interrupt Vectors                          *
+;**************************************************************
+            ORG   $FFFE
+            DC.W  Entry           ; Reset Vector
+            
+            ORG $FF8E
+            DC.W Pressed          ; Interrupt if any of the buttons (0,1,2,4,5,7) is pressed
